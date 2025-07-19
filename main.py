@@ -114,7 +114,7 @@ def scrape_gong_transcript(url):
         if utterance.strip():
             # Format: timestamp | speaker | utterance
             speaker_display = speaker if speaker else "Unknown Speaker"
-            line = f"{timestamp}  {speaker_display} | {utterance}".strip()
+            line = f"{speaker_display} {timestamp} | {utterance}".strip()
             output_lines.append(line)
 
     return output_lines
