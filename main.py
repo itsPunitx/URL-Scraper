@@ -7,6 +7,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from bs4 import BeautifulSoup
 import time
+import re
 
 app = Flask(__name__)
 
@@ -114,7 +115,13 @@ def scrape_gong_transcript(url):
         if utterance.strip():
             # Format: timestamp | speaker | utterance
             speaker_display = speaker if speaker else "Unknown Speaker"
-            line = f"{speaker_display} {timestamp} | {utterance}".strip()
+            
+            match = re.match(r"([A-Za-z\s]+)(\d{1,2}:\d{2})", speaker)
+            if match:
+                speaker = match.group(1).strip()
+                timestamp = match.group(2).strip()
+
+            line = f"{speaker} {timestamp} | {utterance}".strip()
             output_lines.append(line)
 
     return output_lines
