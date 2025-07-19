@@ -1,35 +1,28 @@
-FROM python:3.9-slim
+# Use official Python image
+FROM python:3.11-slim
 
-# Install Chrome dependencies
+# Install necessary system dependencies
 RUN apt-get update && apt-get install -y \
-    wget \
-    curl \
-    unzip \
-    gnupg \
-    software-properties-common \
-    apt-transport-https \
-    ca-certificates
-
-# Add Google Chrome repository
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
-
-# Install Google Chrome
-RUN apt-get update && apt-get install -y \
-    google-chrome-stable \
+    chromium chromium-driver \
+    curl unzip gnupg \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Chrome path
-ENV CHROME_BIN=/usr/bin/google-chrome-stable
+# Set environment variables for Chrome
+ENV CHROME_BIN=/usr/bin/chromium
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Set working directory
+WORKDIR /app
 
-# Copy application
+# Copy project files
 COPY . .
 
-# Expose port
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Expose Flask port
 EXPOSE 5000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "main:app"]
+# Start the application
+CMD ["python", "main.py"]
