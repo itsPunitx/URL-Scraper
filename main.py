@@ -13,7 +13,7 @@ app = Flask(__name__)
 
 def scrape_gong_transcript(url):
     """
-    Enhanced Gong transcript scraper with better speaker name extraction
+    Enhanced Gong transcript scraper with better speaker name extraction and improved error handling
     """
     chrome_options = Options()
     chrome_options.add_argument("--headless")
@@ -36,6 +36,45 @@ def scrape_gong_transcript(url):
 
     try:
         driver.get(url)
+
+        # Wait a bit for the page to load initially
+        time.sleep(5)
+
+        # Get the page source to check for expired access message
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+
+        # Check for expired access message - multiple possible variations
+        page_text = soup.get_text().lower()
+        expired_indicators = [
+            "access to this call has expired",
+            "access has expired",
+            "call has expired",
+            "link has expired",
+            "access expired"
+        ]
+
+        for indicator in expired_indicators:
+            if indicator in page_text:
+                driver.quit()
+                return "Access to this call has expired"
+
+        # Check if the page contains common error indicators
+        error_indicators = [
+            "not found",
+            "404",
+            "error",
+            "access denied",
+            "unauthorized",
+            "forbidden"
+        ]
+
+        # If page contains obvious error indicators but not expired message
+        for error_indicator in error_indicators:
+            if error_indicator in page_text and "transcript" not in page_text.lower():
+                driver.quit()
+                return "An unexpected error occurred. The Link is not valid"
+
+        # Continue with normal transcript extraction
         wait = WebDriverWait(driver, 30)
 
         # Wait for the transcript section to load
@@ -49,24 +88,37 @@ def scrape_gong_transcript(url):
         # Get the page source after everything has loaded
         soup = BeautifulSoup(driver.page_source, "html.parser")
 
-    finally:
+    except Exception as e:
         driver.quit()
+        # Check if it's a timeout or element not found - likely expired/invalid link
+        error_str = str(e).lower()
+        if any(term in error_str for term in ["timeout", "no such element", "element not found"]):
+            return "Access to this call has expired"
+        else:
+            return "An unexpected error occurred. The Link is not valid"
 
+    finally:
+        # Make sure driver is closed in all cases where it was successfully created
+        try:
+            driver.quit()
+        except:
+            pass
+
+    # Parse the transcript
     transcript_section = soup.select_one("section.CallTranscript-moduleCLO4Fw[aria-label='Call transcript']")
     if not transcript_section:
-        raise Exception("Transcript section not found in page source")
+        return "Access to this call has expired"
 
     transcript_blocks = transcript_section.select('div.monologue-wrapper')
     if not transcript_blocks:
-        raise Exception("No transcript blocks found")
+        return "Access to this call has expired"
 
     output_lines = []
-
     for block in transcript_blocks:
         # Multiple selectors for timestamp (try different possible selectors)
         timestamp_element = (
-            block.select_one('span.timestamp') or 
-            block.select_one('.timestamp') or 
+            block.select_one('span.timestamp') or
+            block.select_one('.timestamp') or
             block.select_one('[class*="timestamp"]')
         )
         timestamp = timestamp_element.get_text(strip=True) if timestamp_element else ''
@@ -101,7 +153,6 @@ def scrape_gong_transcript(url):
         # Extract monologue text
         monologue_text = block.select_one('div.monologue-text')
         utterance = ""
-
         if monologue_text:
             # Try to get individual words first
             word_spans = monologue_text.select('span.monologue-word')
@@ -115,16 +166,15 @@ def scrape_gong_transcript(url):
         if utterance.strip():
             # Format: timestamp | speaker | utterance
             speaker_display = speaker if speaker else "Unknown Speaker"
-            
             match = re.match(r"([A-Za-z\s]+)(\d{1,2}:\d{2})", speaker)
             if match:
                 speaker = match.group(1).strip()
                 timestamp = match.group(2).strip()
-
             line = f"{speaker} {timestamp} | {utterance}".strip()
             output_lines.append(line)
 
     return output_lines
+
 
 def debug_transcript_structure(url):
     """
@@ -147,10 +197,8 @@ def debug_transcript_structure(url):
         transcript_section = wait.until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "section.CallTranscript-moduleCLO4Fw"))
         )
-
         time.sleep(3)
         soup = BeautifulSoup(driver.page_source, "html.parser")
-
     finally:
         driver.quit()
 
@@ -193,17 +241,18 @@ def debug_transcript_structure(url):
 
     return None
 
+
 @app.route('/')
 def index():
-    return '''
-<h2>Enhanced Gong Transcript Scraper</h2>
+    return '''<h1>Gong Transcript Scraper</h1>
 <p>Use GET /transcript?url=YOUR_GONG_URL to get transcript with speaker names</p>
-<p>Use GET /debug?url=YOUR_GONG_URL to debug DOM structure</p>
-'''
+<p>Use GET /debug?url=YOUR_GONG_URL to debug DOM structure</p>'''
+
 
 @app.route('/transcript')
-def get_transcript():
+def get_transcript():  
     gong_url = request.args.get('url')
+
     if not gong_url:
         return jsonify({'error': 'Missing required parameter: url'}), 400
 
@@ -211,24 +260,37 @@ def get_transcript():
         return jsonify({'error': 'Invalid URL: Must contain "gong.io"'}), 400
 
     try:
-        transcript_lines = scrape_gong_transcript(gong_url)
+        transcript_result = scrape_gong_transcript(gong_url)
+
+        # Check if result is an error message string
+        if isinstance(transcript_result, str):
+            return jsonify({
+                'success': False,
+                'error': transcript_result,
+                'url': gong_url
+            }), 400
+
+        # Normal successful transcript
         return jsonify({
             'success': True,
             'url': gong_url,
-            'transcript': transcript_lines,
-            'total_lines': len(transcript_lines),
+            'transcript': transcript_result,
+            'total_lines': len(transcript_result),
             'note': 'Speaker names are included after timestamp and before utterance, separated by |'
         })
+
     except Exception as e:
         return jsonify({
             'success': False,
-            'error': str(e),
+            'error': 'An unexpected error occurred. The Link is not valid',
             'url': gong_url
         }), 500
+
 
 @app.route('/debug')
 def debug_structure():
     gong_url = request.args.get('url')
+
     if not gong_url:
         return jsonify({'error': 'Missing required parameter: url'}), 400
 
@@ -249,6 +311,7 @@ def debug_structure():
             'error': str(e),
             'url': gong_url
         }), 500
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
